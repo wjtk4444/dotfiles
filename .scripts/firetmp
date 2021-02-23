@@ -1,0 +1,28 @@
+#!/bin/bash
+
+# remove directory and it's contents
+cleanup() {
+    if [ -d $1 ]; then
+        rm -rf $1
+    fi
+}
+
+# specify directory path for firetmp profile
+firetmp_dir='/tmp/firetmp'
+
+# cleanup before starting
+# in case of previous session being forcibly ended
+cleanup $firetmp_dir
+
+# create empty directory 
+mkdir $firetmp_dir
+
+# debug in case something shits itself
+#read -p 'how many lines: ' lines
+#head ~/.mozilla/firefox/default/user.js -n $lines > $firetmp_dir/user.js
+
+# start firefox and wait for it to exit
+firefox --no-remote --profile $firetmp_dir
+
+# cleanup after firefox is closed
+cleanup $firetmp_dir

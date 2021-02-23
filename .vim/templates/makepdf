@@ -1,0 +1,6 @@
+INPUT=
+OUTPUT=out.pdf
+PANDOCFLAGS=-V geometry:margin=1in
+
+make:
+	pandoc "$(INPUT)" $(PANDOCFLAGS) -o "$(OUTPUT)"

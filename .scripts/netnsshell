@@ -1,0 +1,104 @@
+#!/bin/bash
+
+function print_help() {
+    echo 'DESCRIPTION'
+    echo '  netnsshell is an utility for creating new self-destructing network namespace and'
+    echo '  attaching interactive shells to the existing ones. Self-destruction of the '
+    echo '  network namespace occurs when the last attached shell session ends.'
+    echo
+    echo 'USAGE'
+    echo '  netnsshell [OPTION] [INTERFACE]'
+    echo 
+    echo 'If not specified, first non-loopback INTERFACE with state DOWN or UNKNOWN will be used'
+    echo 
+    echo 'OPTIONS'
+    echo '  -h, --help'
+    echo '      Prints this help and exists'
+    exit
+}
+
+args=()
+while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            print_help
+            exit
+            ;;
+        *)
+            args+=("$1")
+            shift
+            ;;
+    esac
+done
+
+set -- "${args[@]}" # restore other arguments
+
+# interface provided by user
+if [[ "$#" -eq 1 ]]; then
+    interface=$(ip netns list | grep "netns_$1" | awk {'print $1'} | sed 's/netns_//;') 
+    if [[ -z "$interface" ]]; then
+        interface=$(ls /sys/class/net/ | grep "$1")
+        if [[ -z "$interface" ]]; then
+            echo "No such network interface: $1"
+            exit 1
+        fi
+    else
+        netns_exists=1
+    fi
+# use first existing netns / free inferface
+else 
+    interface=$(ip netns list | head -n1 | awk {'print $1'} | sed 's/netns_//;') 
+    if [[ -z "$interface" ]]; then
+        interface=$(/usr/bin/ip -o l | tail -n+2 | grep -e 'state DOWN' -e 'state UNKNOWN' | awk '{print $2}')
+        if [[ -z "$interface" ]]; then
+            echo "No available network interfaces."
+            exit
+        fi
+        interface=${interface::-1} # remove trailing :
+    else
+        netns_exists=1
+    fi
+fi
+
+netns="netns_$interface"
+
+# check if network namespace already exits
+if [[ "$netns_exists" -eq 1 ]]; then
+    echo "Attaching session to an existing network namespace for interface $interface..."
+    # (unnecesary?) sanity check
+    interface=$(sudo ip netns exec $netns ls /sys/class/net/ | grep "$interface")
+    if [[ -z "$interface" ]]; then
+        echo "What in the goddamn?"
+        exit 1
+    fi
+else
+    echo "Creating new network namespace for interface $interface..."
+    
+    sudo ip link set "$interface" down
+    sudo ip netns add "$netns"
+    sudo ip link set "$interface" netns "$netns"
+    sudo ip netns exec "$netns" ip link set lo up
+    sudo ip netns exec "$netns" ip link set "$interface" up
+    sudo ip netns exec "$netns" dhcpcd "$interface"
+fi
+
+# create a custom .bashrc for the new shell
+netns01_PS1="PS1=\"\[\033[38;2;255;255;000m\]\u@\h [$interface] [\W] $ \[\033[00m\]\""
+netns01_PS2="PS2=\"\[\033[38;2;255;255;000m\]> \[\033[00m\]\""
+TMPFILE=$(mktemp)
+echo -e "source /home/$USER/.bashrc\n$netns01_PS1\n$netns01_PS2" > $TMPFILE
+
+# start interactive shell
+sudo -E ip netns exec $netns sudo -E -u $USER bash --rcfile $TMPFILE
+
+rm $TMPFILE
+
+# delete netns if there are no pids attached (exiting last active shell)
+PIDS=$(ip netns pid $netns | grep -E "[0-9]+")
+if [[ -z "$PIDS" ]]; then
+    echo "Deleting network namespace for interface $interface..."
+    sudo ip netns exec $netns dhcpcd -k $interface
+    sudo ip netns exec $netns dhcpcd -x $interface
+    sudo ip netns exec $netns ip link set $interface down
+    sudo ip netns del $netns
+fi

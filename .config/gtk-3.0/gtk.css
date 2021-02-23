@@ -1,0 +1,7 @@
+menubar, .menubar {
+    -GtkWidget-window-dragging: false;
+}
+
+* {
+    -GtkWindow-resize-grip-default: false;
+}
